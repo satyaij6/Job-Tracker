@@ -70,46 +70,95 @@ class EmailNotifier:
         
         return html
     
-    def send_email(self, recipient: str, jobs: List[Dict], subject: str = None):
+    def send_email(self, recipient: str, jobs: List[Dict], subject: str = None, retries: int = 3):
         """Send email notification with job listings"""
         if not jobs:
             logger.info("No jobs to send, skipping email")
-            return
+            return False
         
         if subject is None:
             subject = f"Hi Satya, 🎯 {len(jobs)} New Job Listing(s) Found!"
         
-        try:
-            msg = MIMEMultipart('alternative')
-            msg['Subject'] = subject
-            msg['From'] = self.email
-            msg['To'] = recipient
+        # Try multiple SMTP methods
+        smtp_methods = [
+            {'port': 587, 'use_tls': True, 'use_ssl': False},
+            {'port': 465, 'use_tls': False, 'use_ssl': True},
+            {'port': 25, 'use_tls': True, 'use_ssl': False},
+        ]
+        
+        for attempt in range(retries):
+            for method in smtp_methods:
+                try:
+                    logger.info(f"Attempting to send email (attempt {attempt + 1}/{retries}) via {self.smtp_server}:{method['port']}...")
+                    
+                    msg = MIMEMultipart('alternative')
+                    msg['Subject'] = subject
+                    msg['From'] = self.email
+                    msg['To'] = recipient
+                    
+                    # Create both plain text and HTML versions
+                    text = f"Found {len(jobs)} new job listing(s):\n\n"
+                    for job in jobs:
+                        text += f"{job.get('title', 'N/A')} at {job.get('company', 'Unknown')}\n"
+                        text += f"Link: {job.get('url', '')}\n\n"
+                    
+                    html = self.create_email_body(jobs)
+                    
+                    part1 = MIMEText(text, 'plain')
+                    part2 = MIMEText(html, 'html')
+                    
+                    msg.attach(part1)
+                    msg.attach(part2)
+                    
+                    # Try SSL first (port 465), then TLS (port 587)
+                    if method['use_ssl']:
+                        server = smtplib.SMTP_SSL(self.smtp_server, method['port'], timeout=30)
+                    else:
+                        server = smtplib.SMTP(self.smtp_server, method['port'], timeout=30)
+                    
+                    if method['use_tls']:
+                        server.starttls()
+                    
+                    server.login(self.email, self.password)
+                    server.send_message(msg)
+                    server.quit()
+                    
+                    logger.info(f"✅ Email sent successfully to {recipient} with {len(jobs)} jobs")
+                    return True
+                    
+                except smtplib.SMTPConnectError as e:
+                    logger.warning(f"Connection error on port {method['port']}: {e}")
+                    continue
+                except smtplib.SMTPAuthenticationError as e:
+                    logger.error(f"❌ Authentication failed: {e}")
+                    logger.error("   Check your email and App Password in Railway environment variables")
+                    return False
+                except OSError as e:
+                    error_msg = str(e).lower()
+                    if 'network is unreachable' in error_msg or '101' in error_msg:
+                        logger.warning(f"Network unreachable on port {method['port']}: {e}")
+                        logger.warning("   Railway may be blocking SMTP connections. Trying alternative method...")
+                        continue
+                    else:
+                        logger.warning(f"Network error on port {method['port']}: {e}")
+                        continue
+                except Exception as e:
+                    logger.warning(f"Error on port {method['port']}: {type(e).__name__}: {e}")
+                    continue
             
-            # Create both plain text and HTML versions
-            text = f"Found {len(jobs)} new job listing(s):\n\n"
-            for job in jobs:
-                text += f"{job.get('title', 'N/A')} at {job.get('company', 'Unknown')}\n"
-                text += f"Link: {job.get('url', '')}\n\n"
-            
-            html = self.create_email_body(jobs)
-            
-            part1 = MIMEText(text, 'plain')
-            part2 = MIMEText(html, 'html')
-            
-            msg.attach(part1)
-            msg.attach(part2)
-            
-            with smtplib.SMTP(self.smtp_server, self.smtp_port) as server:
-                server.starttls()
-                server.login(self.email, self.password)
-                server.send_message(msg)
-            
-            logger.info(f"Email sent successfully to {recipient} with {len(jobs)} jobs")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error sending email: {e}")
-            return False
+            if attempt < retries - 1:
+                wait_time = (attempt + 1) * 5  # Wait 5, 10, 15 seconds
+                logger.info(f"Waiting {wait_time} seconds before retry...")
+                import time
+                time.sleep(wait_time)
+        
+        logger.error(f"❌ Failed to send email after {retries} attempts")
+        logger.error("   Possible issues:")
+        logger.error("   1. Railway is blocking SMTP connections (port 587/465)")
+        logger.error("   2. Network connectivity issues")
+        logger.error("   3. Gmail App Password is incorrect")
+        logger.error("   4. Firewall blocking outbound SMTP")
+        return False
     
     def send_test_email(self, recipient: str):
         """Send a test email to verify configuration"""
