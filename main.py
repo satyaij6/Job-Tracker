@@ -5,21 +5,76 @@ Main script to run the job scraper and email notification system
 import schedule
 import time
 import logging
+import os
 from datetime import datetime
 from job_scraper import scrape_all_jobs
 from database import JobDatabase
 from email_notifier import EmailNotifier
-from config import EMAIL_CONFIG, JOB_KEYWORDS, SCRAPING_CONFIG, FILTER_CONFIG
 
+# Initialize logging first
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('job_scraper.log'),
         logging.StreamHandler()
     ]
 )
 logger = logging.getLogger(__name__)
+
+# Try to import config, fallback to environment variables if not available
+try:
+    from config import EMAIL_CONFIG, JOB_KEYWORDS, SCRAPING_CONFIG, FILTER_CONFIG
+except ImportError:
+    # Fallback: Read from environment variables (for cloud deployment)
+    logger.warning("config.py not found, using environment variables only")
+    
+    EMAIL_CONFIG = {
+        'smtp_server': os.getenv('SMTP_SERVER', 'smtp.gmail.com'),
+        'smtp_port': int(os.getenv('SMTP_PORT', '587')),
+        'sender_email': os.getenv('SENDER_EMAIL', ''),
+        'sender_password': os.getenv('SENDER_PASSWORD', ''),
+        'recipient_email': os.getenv('RECIPIENT_EMAIL', ''),
+    }
+    
+    # Parse JOB_KEYWORDS from environment or use defaults
+    keywords_str = os.getenv('JOB_KEYWORDS', '')
+    if keywords_str:
+        JOB_KEYWORDS = [k.strip() for k in keywords_str.split(',')]
+    else:
+        JOB_KEYWORDS = [
+            'new grad', 'fresher', 'entry level', 'internship',
+            'trainee', 'graduate', 'junior', 'associate'
+        ]
+    
+    SCRAPING_CONFIG = {
+        'check_interval_minutes': int(os.getenv('CHECK_INTERVAL_MINUTES', '30')),
+        'scrapers': {
+            'linkedin': os.getenv('SCRAPER_LINKEDIN', 'true').lower() == 'true',
+            'internshala': os.getenv('SCRAPER_INTERNSHALA', 'true').lower() == 'true',
+            'naukri': os.getenv('SCRAPER_NAUKRI', 'true').lower() == 'true',
+            'indeed': os.getenv('SCRAPER_INDEED', 'true').lower() == 'true',
+        }
+    }
+    
+    exclude_keywords_str = os.getenv('EXCLUDE_KEYWORDS', '')
+    if exclude_keywords_str:
+        exclude_keywords = [k.strip() for k in exclude_keywords_str.split(',')]
+    else:
+        exclude_keywords = ['senior', 'lead', 'manager', 'director', 'vp', '5+ years', '10+ years']
+    
+    FILTER_CONFIG = {
+        'min_jobs_for_email': int(os.getenv('MIN_JOBS_FOR_EMAIL', '1')),
+        'exclude_keywords': exclude_keywords
+    }
+
+# Add file handler if running locally (file may not be writable in cloud)
+try:
+    file_handler = logging.FileHandler('job_scraper.log')
+    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+    logger.addHandler(file_handler)
+except Exception:
+    # File logging not available (e.g., in cloud environment)
+    pass
 
 
 def filter_jobs(jobs):
@@ -126,13 +181,22 @@ def main():
     """Main entry point"""
     logger.info("Job Scraper and Email Notification System")
     logger.info("=" * 60)
+    logger.info(f"Starting at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info(f"Environment: {'Railway/Cloud' if os.getenv('RAILWAY_ENVIRONMENT') or os.getenv('RENDER') else 'Local'}")
     
     # Validate configuration
     # Check if email is still the default placeholder (means not configured)
     if EMAIL_CONFIG['sender_email'] == 'your_email@gmail.com' or not EMAIL_CONFIG['sender_email']:
         logger.error("⚠️  Please configure your email settings in config.py or environment variables!")
         logger.error("   Update EMAIL_CONFIG with your email credentials.")
+        logger.error("   Or set environment variables: SENDER_EMAIL, SENDER_PASSWORD, RECIPIENT_EMAIL")
         return
+    
+    # Log configuration status (without sensitive data)
+    logger.info(f"Email configured: {EMAIL_CONFIG['sender_email']}")
+    logger.info(f"Recipient: {EMAIL_CONFIG['recipient_email']}")
+    logger.info(f"SMTP Server: {EMAIL_CONFIG['smtp_server']}:{EMAIL_CONFIG['smtp_port']}")
+    logger.info(f"Check interval: {SCRAPING_CONFIG.get('check_interval_minutes', 30)} minutes")
     
     # Schedule job checks
     interval = SCRAPING_CONFIG.get('check_interval_minutes', 30)
@@ -160,8 +224,16 @@ def main():
 if __name__ == "__main__":
     import sys
     
-    if len(sys.argv) > 1 and sys.argv[1] == '--test-email':
-        test_email()
+    if len(sys.argv) > 1:
+        if sys.argv[1] == '--test-email':
+            test_email()
+        elif sys.argv[1] == '--test':
+            # Run diagnostic tests
+            from test_deployment import main as run_tests
+            run_tests()
+        else:
+            print("Usage: python main.py [--test-email|--test]")
+            sys.exit(1)
     else:
         main()
 
