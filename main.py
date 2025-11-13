@@ -124,12 +124,14 @@ def check_and_notify():
         if len(new_jobs) >= FILTER_CONFIG.get('min_jobs_for_email', 1):
             logger.info("Sending email notification...")
             
-            # Initialize email notifier
+            # Initialize email notifier (supports both SMTP and SendGrid)
+            sendgrid_api_key = os.getenv('SENDGRID_API_KEY')
             notifier = EmailNotifier(
-                smtp_server=EMAIL_CONFIG['smtp_server'],
-                smtp_port=EMAIL_CONFIG['smtp_port'],
+                smtp_server=EMAIL_CONFIG.get('smtp_server'),
+                smtp_port=EMAIL_CONFIG.get('smtp_port'),
                 email=EMAIL_CONFIG['sender_email'],
-                password=EMAIL_CONFIG['sender_password']
+                password=EMAIL_CONFIG.get('sender_password'),
+                sendgrid_api_key=sendgrid_api_key
             )
             
             # Send email
@@ -168,11 +170,13 @@ def test_email():
     logger.info("Testing email configuration...")
     
     try:
+        sendgrid_api_key = os.getenv('SENDGRID_API_KEY')
         notifier = EmailNotifier(
-            smtp_server=EMAIL_CONFIG['smtp_server'],
-            smtp_port=EMAIL_CONFIG['smtp_port'],
+            smtp_server=EMAIL_CONFIG.get('smtp_server'),
+            smtp_port=EMAIL_CONFIG.get('smtp_port'),
             email=EMAIL_CONFIG['sender_email'],
-            password=EMAIL_CONFIG['sender_password']
+            password=EMAIL_CONFIG.get('sender_password'),
+            sendgrid_api_key=sendgrid_api_key
         )
         
         success = notifier.send_test_email(EMAIL_CONFIG['recipient_email'])

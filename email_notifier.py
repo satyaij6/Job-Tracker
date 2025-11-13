@@ -1,13 +1,15 @@
 """
 Email notification module for sending job alerts
+Supports both SMTP and SendGrid API
 """
 
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from typing import List, Dict
+from typing import List, Dict, Optional
 import logging
 from datetime import datetime
+import os
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -16,11 +18,15 @@ logger = logging.getLogger(__name__)
 class EmailNotifier:
     """Handles sending email notifications for new job listings"""
     
-    def __init__(self, smtp_server: str, smtp_port: int, email: str, password: str):
+    def __init__(self, smtp_server: str = None, smtp_port: int = None, email: str = None, password: str = None, sendgrid_api_key: str = None):
         self.smtp_server = smtp_server
         self.smtp_port = smtp_port
         self.email = email
         self.password = password
+        self.sendgrid_api_key = sendgrid_api_key or os.getenv('SENDGRID_API_KEY')
+        
+        # Check if SendGrid should be used
+        self.use_sendgrid = os.getenv('USE_SENDGRID', 'false').lower() == 'true' or self.sendgrid_api_key is not None
     
     def create_email_body(self, jobs: List[Dict]) -> str:
         """Create HTML email body with job listings"""
@@ -70,6 +76,59 @@ class EmailNotifier:
         
         return html
     
+    def send_email_via_sendgrid(self, recipient: str, jobs: List[Dict], subject: str) -> bool:
+        """Send email using SendGrid API"""
+        try:
+            from sendgrid import SendGridAPIClient
+            from sendgrid.helpers.mail import Mail, Email, Content
+            
+            if not self.sendgrid_api_key:
+                logger.error("❌ SendGrid API key not found")
+                return False
+            
+            logger.info("Sending email via SendGrid API...")
+            
+            # Create email content
+            html_content = self.create_email_body(jobs)
+            
+            text_content = f"Found {len(jobs)} new job listing(s):\n\n"
+            for job in jobs:
+                text_content += f"{job.get('title', 'N/A')} at {job.get('company', 'Unknown')}\n"
+                text_content += f"Link: {job.get('url', '')}\n\n"
+            
+            # Create SendGrid message
+            from_email = Email(self.email or os.getenv('SENDER_EMAIL', 'noreply@example.com'))
+            to_email = Email(recipient)
+            content_html = Content("text/html", html_content)
+            content_text = Content("text/plain", text_content)
+            
+            message = Mail(
+                from_email=from_email,
+                to_emails=to_email,
+                subject=subject,
+                html_content=content_html
+            )
+            message.add_content(content_text)
+            
+            # Send email
+            sg = SendGridAPIClient(self.sendgrid_api_key)
+            response = sg.send(message)
+            
+            if response.status_code in [200, 202]:
+                logger.info(f"✅ Email sent successfully via SendGrid to {recipient} with {len(jobs)} jobs")
+                return True
+            else:
+                logger.error(f"❌ SendGrid API error: Status {response.status_code}")
+                logger.error(f"Response: {response.body}")
+                return False
+                
+        except ImportError:
+            logger.error("❌ SendGrid package not installed. Run: pip install sendgrid")
+            return False
+        except Exception as e:
+            logger.error(f"❌ Error sending email via SendGrid: {e}")
+            return False
+    
     def send_email(self, recipient: str, jobs: List[Dict], subject: str = None, retries: int = 3):
         """Send email notification with job listings"""
         if not jobs:
@@ -78,6 +137,17 @@ class EmailNotifier:
         
         if subject is None:
             subject = f"Hi Satya, 🎯 {len(jobs)} New Job Listing(s) Found!"
+        
+        # Try SendGrid first if configured
+        if self.use_sendgrid:
+            logger.info("Using SendGrid API for email delivery...")
+            success = self.send_email_via_sendgrid(recipient, jobs, subject)
+            if success:
+                return True
+            else:
+                logger.warning("SendGrid failed, falling back to SMTP...")
+        
+        # Fall back to SMTP if SendGrid not available or failed
         
         # Try multiple SMTP methods
         smtp_methods = [
