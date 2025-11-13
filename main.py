@@ -106,16 +106,19 @@ def check_and_notify():
         
         # Scrape jobs from all sources
         logger.info(f"Scraping jobs with keywords: {JOB_KEYWORDS}")
+        logger.info("Starting scraping process...")
         all_jobs = scrape_all_jobs(JOB_KEYWORDS)
-        logger.info(f"Total jobs scraped: {len(all_jobs)}")
+        logger.info(f"✅ Scraping complete! Total jobs scraped: {len(all_jobs)}")
         
         # Filter jobs
+        logger.info("Filtering jobs...")
         filtered_jobs = filter_jobs(all_jobs)
-        logger.info(f"Jobs after filtering: {len(filtered_jobs)}")
+        logger.info(f"✅ Filtering complete! Jobs after filtering: {len(filtered_jobs)}")
         
         # Add to database and get only new jobs
+        logger.info("Checking for new jobs in database...")
         new_jobs = db.add_jobs(filtered_jobs)
-        logger.info(f"New jobs found: {len(new_jobs)}")
+        logger.info(f"✅ Database check complete! New jobs found: {len(new_jobs)}")
         
         # Send email if we have new jobs
         if len(new_jobs) >= FILTER_CONFIG.get('min_jobs_for_email', 1):
@@ -153,7 +156,11 @@ def check_and_notify():
         logger.info("=" * 60)
         
     except Exception as e:
-        logger.error(f"Error in check_and_notify: {e}", exc_info=True)
+        logger.error(f"❌ Error in check_and_notify: {e}", exc_info=True)
+        logger.error(f"Error type: {type(e).__name__}")
+        import traceback
+        logger.error(f"Full traceback:\n{traceback.format_exc()}")
+        raise  # Re-raise to see in logs
 
 
 def test_email():
@@ -209,16 +216,25 @@ def main():
     check_and_notify()
     
     # Keep running
-    logger.info(f"Monitoring started. Checking every {interval} minutes...")
-    logger.info("Press Ctrl+C to stop.")
+    logger.info(f"✅ Monitoring started. Checking every {interval} minutes...")
+    logger.info("Process will run continuously. Press Ctrl+C to stop (if running locally).")
     
     try:
         while True:
-            schedule.run_pending()
-            time.sleep(60)  # Check every minute if any scheduled jobs are due
+            try:
+                schedule.run_pending()
+                time.sleep(60)  # Check every minute if any scheduled jobs are due
+            except Exception as e:
+                logger.error(f"Error in main loop: {e}", exc_info=True)
+                logger.info("Continuing to run despite error...")
+                time.sleep(60)  # Wait before continuing
     except KeyboardInterrupt:
         logger.info("\nStopping job scraper...")
         logger.info("Goodbye!")
+    except Exception as e:
+        logger.error(f"Fatal error in main loop: {e}", exc_info=True)
+        logger.error("Process will exit. Check logs for details.")
+        raise
 
 
 if __name__ == "__main__":

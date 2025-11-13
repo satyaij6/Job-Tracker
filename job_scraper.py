@@ -249,10 +249,14 @@ def scrape_all_jobs(keywords: List[str] = None) -> List[Dict]:
             logger.info(f"Scraping {scraper.__class__.__name__}...")
             jobs = scraper.scrape(keywords)
             all_jobs.extend(jobs)
-            logger.info(f"Found {len(jobs)} jobs from {scraper.__class__.__name__}")
+            logger.info(f"✅ Found {len(jobs)} jobs from {scraper.__class__.__name__}")
+            logger.info(f"   Total jobs so far: {len(all_jobs)}")
         except Exception as e:
-            logger.error(f"Error with {scraper.__class__.__name__}: {e}")
+            logger.error(f"❌ Error with {scraper.__class__.__name__}: {e}", exc_info=True)
+            logger.info(f"   Continuing with other scrapers...")
             continue
+    
+    logger.info(f"✅ All scrapers completed. Total jobs found: {len(all_jobs)}")
     
     return all_jobs
 
