@@ -80,7 +80,7 @@ class EmailNotifier:
         """Send email using SendGrid API"""
         try:
             from sendgrid import SendGridAPIClient
-            from sendgrid.helpers.mail import Mail, Email, Content
+            from sendgrid.helpers.mail import Mail, Content
             
             if not self.sendgrid_api_key:
                 logger.error("❌ SendGrid API key not found")
@@ -96,19 +96,20 @@ class EmailNotifier:
                 text_content += f"{job.get('title', 'N/A')} at {job.get('company', 'Unknown')}\n"
                 text_content += f"Link: {job.get('url', '')}\n\n"
             
-            # Create SendGrid message
-            from_email = Email(self.email or os.getenv('SENDER_EMAIL', 'noreply@example.com'))
-            to_email = Email(recipient)
-            content_html = Content("text/html", html_content)
-            content_text = Content("text/plain", text_content)
+            from_email_address = self.email or os.getenv('SENDER_EMAIL', 'noreply@example.com')
+            if not from_email_address:
+                logger.error("❌ No sender email configured for SendGrid")
+                return False
             
+            # Create SendGrid message (html + plain text)
             message = Mail(
-                from_email=from_email,
-                to_emails=to_email,
+                from_email=from_email_address,
+                to_emails=recipient,
                 subject=subject,
-                html_content=content_html
+                html_content=html_content
             )
-            message.add_content(content_text)
+            # Add plain text version for email clients that don't support HTML
+            message.add_content(Content("text/plain", text_content))
             
             # Send email
             sg = SendGridAPIClient(self.sendgrid_api_key)
